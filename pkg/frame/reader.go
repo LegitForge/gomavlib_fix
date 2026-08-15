@@ -11,7 +11,14 @@ import (
 )
 
 const (
-	bufferSize = 512 // frames cannot go beyond len(header) + 255 + len(check) + len(sig)
+	maxFrameSize = 512 // frames cannot go beyond len(header) + 255 + len(check) + len(sig)
+
+	// On a datagram transport a single read yields an entire datagram, which
+	// may pack several frames and reach the 65507-byte UDP payload limit. A
+	// buffer sized for one frame would leave the rest of the datagram unread,
+	// and on UDP the unread remainder is dropped rather than kept for the next
+	// read.
+	readBufferSize = 65536
 )
 
 func hasStringFields(msg message.Message) bool {

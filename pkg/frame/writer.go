@@ -47,7 +47,7 @@ func (w *Writer) Initialize() error {
 		w.timeNow = time.Now
 	}
 
-	w.bw = make([]byte, bufferSize)
+	w.bw = make([]byte, maxFrameSize)
 
 	return nil
 }

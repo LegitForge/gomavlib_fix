@@ -32,7 +32,7 @@ func (rw *ReadWriter) Initialize() error {
 	}
 
 	r := &Reader{
-		BufByteReader: bufio.NewReaderSize(rw.ByteReadWriter, bufferSize),
+		BufByteReader: bufio.NewReaderSize(rw.ByteReadWriter, readBufferSize),
 		DialectRW:     rw.DialectRW,
 		InKey:         rw.InKey,
 	}

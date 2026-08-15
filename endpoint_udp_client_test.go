@@ -197,12 +197,7 @@ func TestEndpointUDPClientDatagramRecovery(t *testing.T) {
 	evt = <-node.Events()
 	parseErr, ok = evt.(*EventParseError)
 	require.True(t, ok)
-	require.EqualError(t, parseErr.Error, "unknown incompatibility flag: 4")
-
-	evt = <-node.Events()
-	parseErr, ok = evt.(*EventParseError)
-	require.True(t, ok)
-	require.EqualError(t, parseErr.Error, "skipped 7 bytes")
+	require.EqualError(t, parseErr.Error, "unknown incompatibility flag: 4; skipped 7 bytes")
 
 	evt = <-node.Events()
 	fr, ok := evt.(*EventFrame)
@@ -228,7 +223,7 @@ func TestEndpointUDPClientDatagramRecovery(t *testing.T) {
 	evt = <-node.Events()
 	parseErr, ok = evt.(*EventParseError)
 	require.True(t, ok)
-	require.EqualError(t, parseErr.Error, "skipped 5 bytes")
+	require.EqualError(t, parseErr.Error, "invalid magic byte: ff; skipped 4 bytes")
 
 	evt = <-node.Events()
 	fr, ok = evt.(*EventFrame)

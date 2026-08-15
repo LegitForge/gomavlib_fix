@@ -13,8 +13,12 @@ import (
 )
 
 const (
-	writeBufferSize        = 64
-	datagramReadBufferSize = 512
+	writeBufferSize = 64
+	// A datagram carries any number of frames and a UDP payload can reach
+	// 65507 bytes. Reading less than the whole datagram truncates it: the
+	// remainder is dropped by the operating system rather than kept for the
+	// next read.
+	datagramReadBufferSize = 65536
 )
 
 type datagramReader struct {
@@ -203,22 +207,26 @@ func (ch *Channel) runReader() error {
 		var fr frame.Frame
 
 		if ch.isDatagram {
-			skipped := len(ch.datagramReader.buf) - ch.datagramReader.pos
-			err := ch.datagramReader.ReadPacket()
-			if err != nil {
-				return err
+			// A datagram can pack several frames, so the next one is fetched
+			// only once the current datagram has been parsed to its end.
+			if ch.frameReadWriter.BufByteReader.Buffered() == 0 {
+				err := ch.datagramReader.ReadPacket()
+				if err != nil {
+					return err
+				}
 			}
 
-			n := ch.frameReadWriter.BufByteReader.Buffered()
-			skipped += n
-			ch.frameReadWriter.BufByteReader.Discard(n) //nolint:errcheck
-
-			if skipped > 0 {
-				ch.node.pushEvent(&EventParseError{fmt.Errorf("skipped %d bytes", skipped), ch})
-			}
-
+			var err error
 			fr, err = ch.frameReadWriter.Read()
 			if err != nil {
+				// A frame that does not parse leaves the reader at an unknown
+				// offset, so the rest of the datagram cannot be trusted either.
+				// Dropping it resynchronises on the next datagram boundary; the
+				// transport itself is unaffected, which is why no error here
+				// ends the channel.
+				if skipped := ch.discardDatagram(); skipped > 0 {
+					err = fmt.Errorf("%w; skipped %d bytes", err, skipped)
+				}
 				ch.node.pushEvent(&EventParseError{err, ch})
 				continue
 			}
@@ -243,6 +251,19 @@ func (ch *Channel) runReader() error {
 
 		ch.node.pushEvent(evt)
 	}
+}
+
+// discardDatagram drops what is left of the datagram being parsed — both the
+// bytes already pulled into the frame reader and those still in the packet
+// buffer — and reports how many were dropped.
+func (ch *Channel) discardDatagram() int {
+	n := ch.frameReadWriter.BufByteReader.Buffered()
+	ch.frameReadWriter.BufByteReader.Discard(n) //nolint:errcheck
+
+	n += len(ch.datagramReader.buf) - ch.datagramReader.pos
+	ch.datagramReader.pos = len(ch.datagramReader.buf)
+
+	return n
 }
 
 func (ch *Channel) runWriter(writerTerminate chan struct{}) error {

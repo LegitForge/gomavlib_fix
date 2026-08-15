@@ -418,7 +418,7 @@ func TestReader(t *testing.T) {
 	for _, ca := range casesReadWrite {
 		t.Run(ca.name, func(t *testing.T) {
 			reader := &Reader{
-				BufByteReader: bufio.NewReaderSize(bytes.NewReader(ca.raw), bufferSize),
+				BufByteReader: bufio.NewReaderSize(bytes.NewReader(ca.raw), readBufferSize),
 				DialectRW:     ca.dialectRW,
 				InKey:         ca.key,
 			}
@@ -478,7 +478,7 @@ func TestReaderErrorSignatureTimestamp(t *testing.T) {
 	buf.Write(buf2[:n])
 
 	reader := &Reader{
-		BufByteReader: bufio.NewReaderSize(&buf, bufferSize),
+		BufByteReader: bufio.NewReaderSize(&buf, readBufferSize),
 		InKey:         NewV2Key(bytes.Repeat([]byte("\x4F"), 32)),
 	}
 	err = reader.Initialize()
