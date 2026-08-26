@@ -143,8 +143,8 @@ func TestChannelDatagramResyncAfterGarbage(t *testing.T) {
 
 	for i := range 2 {
 		evt = <-node.Events()
-		fr, ok := evt.(*EventFrame)
-		require.True(t, ok, "expected a frame, got %T", evt)
+		fr, frOk := evt.(*EventFrame)
+		require.True(t, frOk, "expected a frame, got %T", evt)
 		require.Equal(t, byte(i), fr.Frame.(*frame.V2Frame).SequenceNumber)
 	}
 }
