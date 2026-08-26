@@ -99,7 +99,19 @@ func (r *Reader) Read() (Frame, error) {
 		f = &V2Frame{}
 
 	default:
-		return nil, newError("invalid magic byte: %x", magicByte)
+		// Resynchronise on the next magic byte instead of dropping the buffer,
+		// so the frames following a damaged one survive. Only buffered bytes
+		// are scanned, which keeps this from blocking on the link.
+		skipped := 0
+		for r.BufByteReader.Buffered() > 0 {
+			next, _ := r.BufByteReader.Peek(1)
+			if next[0] == V1MagicByte || next[0] == V2MagicByte {
+				break
+			}
+			r.BufByteReader.Discard(1) //nolint:errcheck
+			skipped++
+		}
+		return nil, newError("invalid magic byte: %x; skipped %d bytes", magicByte, skipped)
 	}
 
 	err = f.unmarshal(r.BufByteReader)

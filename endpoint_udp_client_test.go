@@ -137,11 +137,11 @@ func TestEndpointUDPClientDatagramRecovery(t *testing.T) {
 		_, clientAddr, err2 := pc.ReadFrom(buf)
 		require.NoError(t, err2)
 
-		// first malformed packet (too short)
+		// packet cut short: its tail is looked for in the next datagram
 		_, err2 = pc.WriteTo([]byte{frame.V2MagicByte}, clientAddr)
 		require.NoError(t, err2)
 
-		// second malformed packet (unknown incompatibility flag, with trailing payload+checksum bytes
+		// which turns this one into the tail of the previous frame, then junk
 		_, err2 = pc.WriteTo([]byte{frame.V2MagicByte, 5, 0x04, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, clientAddr)
 		require.NoError(t, err2)
 
@@ -192,12 +192,12 @@ func TestEndpointUDPClientDatagramRecovery(t *testing.T) {
 	evt = <-node.Events()
 	parseErr, ok := evt.(*EventParseError)
 	require.True(t, ok)
-	require.EqualError(t, parseErr.Error, "packet is too short")
+	require.EqualError(t, parseErr.Error, "unknown incompatibility flag: 5")
 
 	evt = <-node.Events()
 	parseErr, ok = evt.(*EventParseError)
 	require.True(t, ok)
-	require.EqualError(t, parseErr.Error, "unknown incompatibility flag: 4; skipped 7 bytes")
+	require.EqualError(t, parseErr.Error, "invalid magic byte: 0; skipped 7 bytes")
 
 	evt = <-node.Events()
 	fr, ok := evt.(*EventFrame)

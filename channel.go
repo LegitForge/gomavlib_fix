@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
-	"fmt"
 	"io"
 
 	"github.com/bluenviron/gomavlib/v4/pkg/frame"
@@ -27,8 +26,8 @@ type datagramReader struct {
 	pos int
 }
 
-func (r *datagramReader) ReadPacket() error {
-	if r.buf == nil {
+func (r *datagramReader) readPacket() error {
+	if cap(r.buf) < datagramReadBufferSize {
 		r.buf = make([]byte, datagramReadBufferSize)
 	}
 
@@ -43,12 +42,24 @@ func (r *datagramReader) ReadPacket() error {
 	return nil
 }
 
-func (r *datagramReader) Read(p []byte) (n int, err error) {
-	n = copy(p, r.buf[r.pos:])
-	r.pos += n
-	if n == 0 && r.pos >= len(r.buf) {
-		return 0, fmt.Errorf("packet is too short")
+// Read implements io.Reader on top of a datagram transport.
+//
+// Datagram boundaries do not coincide with frame boundaries: ArduPilot flushes
+// whatever contiguous region its UART ring buffer holds, so a frame is cut in
+// two whenever the ring wraps. The reader therefore has to behave like a byte
+// stream and fetch the next datagram to complete a frame started in the
+// previous one, the way pymavlink appends every datagram to one parse buffer.
+func (r *datagramReader) Read(p []byte) (int, error) {
+	for r.pos >= len(r.buf) {
+		err := r.readPacket()
+		if err != nil {
+			return 0, err
+		}
 	}
+
+	n := copy(p, r.buf[r.pos:])
+	r.pos += n
+
 	return n, nil
 }
 
@@ -204,43 +215,17 @@ func (ch *Channel) runReader() error {
 	ch.node.pushEvent(&EventChannelOpen{ch})
 
 	for {
-		var fr frame.Frame
-
-		if ch.isDatagram {
-			// A datagram can pack several frames, so the next one is fetched
-			// only once the current datagram has been parsed to its end.
-			if ch.frameReadWriter.BufByteReader.Buffered() == 0 {
-				err := ch.datagramReader.ReadPacket()
-				if err != nil {
-					return err
-				}
-			}
-
-			var err error
-			fr, err = ch.frameReadWriter.Read()
-			if err != nil {
-				// A frame that does not parse leaves the reader at an unknown
-				// offset, so the rest of the datagram cannot be trusted either.
-				// Dropping it resynchronises on the next datagram boundary; the
-				// transport itself is unaffected, which is why no error here
-				// ends the channel.
-				if skipped := ch.discardDatagram(); skipped > 0 {
-					err = fmt.Errorf("%w; skipped %d bytes", err, skipped)
-				}
+		// Datagram and stream transports share this path: datagramReader turns
+		// packets into a byte stream, so a parse error is recovered identically
+		// in both cases by resynchronising on the next magic byte.
+		fr, err := ch.frameReadWriter.Read()
+		if err != nil {
+			var eerr frame.ReadError
+			if errors.As(err, &eerr) {
 				ch.node.pushEvent(&EventParseError{err, ch})
 				continue
 			}
-		} else {
-			var err error
-			fr, err = ch.frameReadWriter.Read()
-			if err != nil {
-				var eerr frame.ReadError
-				if errors.As(err, &eerr) {
-					ch.node.pushEvent(&EventParseError{err, ch})
-					continue
-				}
-				return err
-			}
+			return err
 		}
 
 		evt := &EventFrame{fr, ch}
@@ -251,19 +236,6 @@ func (ch *Channel) runReader() error {
 
 		ch.node.pushEvent(evt)
 	}
-}
-
-// discardDatagram drops what is left of the datagram being parsed — both the
-// bytes already pulled into the frame reader and those still in the packet
-// buffer — and reports how many were dropped.
-func (ch *Channel) discardDatagram() int {
-	n := ch.frameReadWriter.BufByteReader.Buffered()
-	ch.frameReadWriter.BufByteReader.Discard(n) //nolint:errcheck
-
-	n += len(ch.datagramReader.buf) - ch.datagramReader.pos
-	ch.datagramReader.pos = len(ch.datagramReader.buf)
-
-	return n
 }
 
 func (ch *Channel) runWriter(writerTerminate chan struct{}) error {

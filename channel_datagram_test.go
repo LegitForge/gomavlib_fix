@@ -96,33 +96,55 @@ func TestChannelDatagramMultipleFrames(t *testing.T) {
 	}
 }
 
-func TestChannelDatagramCorruptedTail(t *testing.T) {
+func TestChannelDatagramFrameSplitAcrossDatagrams(t *testing.T) {
+	const frameCount = 30
+
 	node, local := newDatagramNode(t)
 	defer node.Close()
 
-	// two intact frames, then a truncated one: the reader cannot tell where the
-	// next frame starts, so the rest of the datagram is dropped
-	datagram := encodeDatagram(t, 3)
-	_, err := local.Write(datagram[:len(datagram)-4])
-	require.NoError(t, err)
+	// cut the batch in the middle of a frame, the way ArduPilot does when its
+	// ring buffer wraps: the frame has to be reassembled across the boundary
+	batch := encodeDatagram(t, frameCount)
+	cut := len(batch)/2 + 7
 
-	for i := range 2 {
+	writeErr := make(chan error, 2)
+	go func() {
+		_, err := local.Write(batch[:cut])
+		writeErr <- err
+		_, err = local.Write(batch[cut:])
+		writeErr <- err
+	}()
+
+	for i := range frameCount {
 		evt := <-node.Events()
 		fr, ok := evt.(*EventFrame)
 		require.True(t, ok, "expected a frame, got %T", evt)
 		require.Equal(t, byte(i), fr.Frame.(*frame.V2Frame).SequenceNumber)
 	}
 
-	evt := <-node.Events()
-	_, ok := evt.(*EventParseError)
-	require.True(t, ok, "expected a parse error, got %T", evt)
+	require.NoError(t, <-writeErr)
+	require.NoError(t, <-writeErr)
+}
 
-	// the channel stays open and picks up the next datagram
-	_, err = local.Write(encodeDatagram(t, 1))
+func TestChannelDatagramResyncAfterGarbage(t *testing.T) {
+	node, local := newDatagramNode(t)
+	defer node.Close()
+
+	// a datagram that does not begin on a frame boundary: the leading bytes are
+	// reported once and skipped, and the frames behind them still get through
+	datagram := append(bytes.Repeat([]byte{0x00}, 64), encodeDatagram(t, 2)...)
+	_, err := local.Write(datagram)
 	require.NoError(t, err)
 
-	evt = <-node.Events()
-	fr, ok := evt.(*EventFrame)
-	require.True(t, ok, "expected a frame, got %T", evt)
-	require.Equal(t, byte(0), fr.Frame.(*frame.V2Frame).SequenceNumber)
+	evt := <-node.Events()
+	parseErr, ok := evt.(*EventParseError)
+	require.True(t, ok, "expected a parse error, got %T", evt)
+	require.ErrorContains(t, parseErr.Error, "skipped 63 bytes")
+
+	for i := range 2 {
+		evt = <-node.Events()
+		fr, ok := evt.(*EventFrame)
+		require.True(t, ok, "expected a frame, got %T", evt)
+		require.Equal(t, byte(i), fr.Frame.(*frame.V2Frame).SequenceNumber)
+	}
 }
