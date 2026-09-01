@@ -84,6 +84,7 @@ type report struct {
 	GapDetail          []gapRecord    `json:"gap_detail"`
 	ErrorDetail        []errorRecord  `json:"error_detail"`
 	FrameOffsets       []int          `json:"frame_offsets"`
+	FrameDetail        []frameRecord  `json:"frame_detail"`
 }
 
 // countingReader counts what the frame reader has pulled from the stream, so
@@ -133,6 +134,25 @@ func typeName(msg message.Message) string {
 	return fmt.Sprintf("%T", msg)
 }
 
+// payloadLen recovers the length of the payload as it travelled on the wire,
+// which is what pymavlink reports. A decoded message no longer carries it, so
+// it is re-encoded through the same dialect; v2 truncates trailing zeroes, so
+// the frame version matters.
+func payloadLen(dialectRW *dialect.ReadWriter, fr frame.Frame, msg message.Message) int {
+	if raw, ok := msg.(*message.MessageRaw); ok {
+		return len(raw.Payload)
+	}
+
+	rw := dialectRW.GetMessage(msg.GetID())
+	if rw == nil {
+		return 0
+	}
+
+	_, isV2 := fr.(*frame.V2Frame)
+
+	return len(rw.Write(msg, isV2).Payload)
+}
+
 func run() error {
 	streamName := flag.String("stream", "", "name given to mavstream.py extract, without extension")
 	out := flag.String("o", "", "write the full report here")
@@ -178,6 +198,7 @@ func run() error {
 		GapDetail:       []gapRecord{},
 		ErrorDetail:     []errorRecord{},
 		FrameOffsets:    []int{},
+		FrameDetail:     []frameRecord{},
 	}
 
 	lastSeq := map[string]byte{}
@@ -245,6 +266,15 @@ func run() error {
 		rep.FramesByType[typeName(msg)]++
 		rep.FramesByMsgID[fmt.Sprintf("%d", msg.GetID())]++
 		rep.FrameOffsets = append(rep.FrameOffsets, offset)
+		rep.FrameDetail = append(rep.FrameDetail, frameRecord{
+			Offset:     offset,
+			MsgID:      msg.GetID(),
+			Type:       typeName(msg),
+			SysID:      fr.GetSystemID(),
+			CompID:     fr.GetComponentID(),
+			Seq:        fr.GetSequenceNumber(),
+			PayloadLen: payloadLen(dialectRW, fr, msg),
+		})
 	}
 
 	encoded, err := json.MarshalIndent(rep, "", " ")
