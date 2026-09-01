@@ -40,6 +40,22 @@ func hasEmptyBytes(buf []byte) bool {
 // ReadError is the error returned in case of non-fatal parsing errors.
 type ReadError struct {
 	str string
+
+	// SkippedBytes holds the bytes dropped while resynchronising, starting with
+	// the one that was not a valid magic byte. Nil for every other read error.
+	SkippedBytes []byte
+
+	// StoppedAtMagic reports how resynchronisation ended. True means a magic
+	// byte was found and the frames behind it are intact. False means the
+	// buffered data ran out first, so what follows the skipped bytes is still
+	// unknown — on a datagram link that is the tail of a datagram. The two
+	// cases are indistinguishable from the byte count alone but point at
+	// different faults.
+	StoppedAtMagic bool
+
+	// Buffered is how many bytes were left in the reader once the error was
+	// produced.
+	Buffered int
 }
 
 func (e ReadError) Error() string {
@@ -102,16 +118,31 @@ func (r *Reader) Read() (Frame, error) {
 		// Resynchronise on the next magic byte instead of dropping the buffer,
 		// so the frames following a damaged one survive. Only buffered bytes
 		// are scanned, which keeps this from blocking on the link.
-		skipped := 0
+		skipped := []byte{magicByte}
+		stoppedAtMagic := false
+
 		for r.BufByteReader.Buffered() > 0 {
 			next, _ := r.BufByteReader.Peek(1)
 			if next[0] == V1MagicByte || next[0] == V2MagicByte {
+				stoppedAtMagic = true
 				break
 			}
+			skipped = append(skipped, next[0])
 			r.BufByteReader.Discard(1) //nolint:errcheck
-			skipped++
 		}
-		return nil, newError("invalid magic byte: %x; skipped %d bytes", magicByte, skipped)
+
+		reason := "buffer exhausted"
+		if stoppedAtMagic {
+			reason = "stopped at magic byte"
+		}
+
+		rerr := newError("invalid magic byte: %x; skipped %d bytes; %s",
+			magicByte, len(skipped)-1, reason)
+		rerr.SkippedBytes = skipped
+		rerr.StoppedAtMagic = stoppedAtMagic
+		rerr.Buffered = r.BufByteReader.Buffered()
+
+		return nil, rerr
 	}
 
 	err = f.unmarshal(r.BufByteReader)

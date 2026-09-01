@@ -141,6 +141,11 @@ func TestChannelDatagramResyncAfterGarbage(t *testing.T) {
 	require.True(t, ok, "expected a parse error, got %T", evt)
 	require.ErrorContains(t, parseErr.Error, "skipped 63 bytes")
 
+	var readErr frame.ReadError
+	require.ErrorAs(t, parseErr.Error, &readErr)
+	require.True(t, readErr.StoppedAtMagic)
+	require.Equal(t, bytes.Repeat([]byte{0x00}, 64), readErr.SkippedBytes)
+
 	for i := range 2 {
 		evt = <-node.Events()
 		fr, frOk := evt.(*EventFrame)

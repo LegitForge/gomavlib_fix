@@ -197,7 +197,7 @@ func TestEndpointUDPClientDatagramRecovery(t *testing.T) {
 	evt = <-node.Events()
 	parseErr, ok = evt.(*EventParseError)
 	require.True(t, ok)
-	require.EqualError(t, parseErr.Error, "invalid magic byte: 0; skipped 7 bytes")
+	require.EqualError(t, parseErr.Error, "invalid magic byte: 0; skipped 7 bytes; buffer exhausted")
 
 	evt = <-node.Events()
 	fr, ok := evt.(*EventFrame)
@@ -223,7 +223,7 @@ func TestEndpointUDPClientDatagramRecovery(t *testing.T) {
 	evt = <-node.Events()
 	parseErr, ok = evt.(*EventParseError)
 	require.True(t, ok)
-	require.EqualError(t, parseErr.Error, "invalid magic byte: ff; skipped 4 bytes")
+	require.EqualError(t, parseErr.Error, "invalid magic byte: ff; skipped 4 bytes; buffer exhausted")
 
 	evt = <-node.Events()
 	fr, ok = evt.(*EventFrame)
