@@ -21,9 +21,10 @@ const (
 )
 
 type datagramReader struct {
-	r   io.ReadCloser
-	buf []byte
-	pos int
+	r    io.ReadCloser
+	dump *streamDump
+	buf  []byte
+	pos  int
 }
 
 func (r *datagramReader) readPacket() error {
@@ -38,6 +39,11 @@ func (r *datagramReader) readPacket() error {
 
 	r.buf = r.buf[:n]
 	r.pos = 0
+
+	// The datagram is whole here and its boundary is known, which is exactly
+	// what a byte-stream reader loses further down. Recording it costs nothing
+	// unless dumping was asked for.
+	r.dump.add(r.buf)
 
 	return nil
 }
@@ -107,7 +113,13 @@ func (ch *Channel) initialize() error {
 
 	var rw io.ReadWriter
 	if ch.isDatagram {
-		ch.datagramReader = &datagramReader{r: ch.rwc}
+		var dump *streamDump
+		dump, err = newStreamDump(ch.label)
+		if err != nil {
+			return err
+		}
+
+		ch.datagramReader = &datagramReader{r: ch.rwc, dump: dump}
 		rw = &readWriter{
 			Reader: ch.datagramReader,
 			Writer: ch.rwc,
@@ -155,6 +167,11 @@ func (ch *Channel) close() {
 	ch.ctxCancel()
 	if !ch.running {
 		ch.rwc.Close()
+		// run() closes the dump for a channel that started; this covers the
+		// one that never did.
+		if ch.datagramReader != nil {
+			ch.datagramReader.dump.close()
+		}
 	}
 }
 
@@ -201,6 +218,10 @@ func (ch *Channel) run() {
 	}
 
 	ch.ctxCancel()
+
+	if ch.datagramReader != nil {
+		ch.datagramReader.dump.close()
+	}
 
 	ch.node.pushEvent(&EventChannelClose{
 		Channel: ch,
